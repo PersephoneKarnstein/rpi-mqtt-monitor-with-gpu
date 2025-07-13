@@ -101,6 +101,25 @@ def check_memory():
     return memory
 
 
+def get_gpu_status():
+    try:
+        full_cmd = "amdgpu_top -J -n 1"
+        gpuinfo = subprocess.Popen(full_cmd, shell=True, stdout=subprocess.PIPE).communicate()[0]
+        gpuinfo = json.loads(gpuinfo.decode('utf-8').strip())
+        # print(gpuinfo["devices"][0])
+
+        #sensors
+        temp = gpuinfo["devices"][0]["Sensors"]["Junction Temperature"]["value"] # ºC
+        fan = gpuinfo["devices"][0]["Sensors"]["Fan"]["value"] # RPM
+        graphicspercent = gpuinfo["devices"][0]["GRBM"]["Graphics Pipe"]["value"] # %
+
+        # print(temp,fan,graphicspercent)
+        return [temp,fan,graphicspercent]
+
+    except Exception as e:
+        return "Error: " + str(e)
+
+
 def check_rpi_power_status():
     try:
         full_cmd = "vcgencmd get_throttled | cut -d= -f2"
@@ -497,6 +516,7 @@ def add_common_attributes(data, icon, name, unit=None, device_class=None, state_
         data["state_class"] = state_class
 
 def handle_specific_configurations(data, what_config, device):
+    # print(data)
     if what_config == "cpu_load":
         add_common_attributes(data, "mdi:speedometer", get_translation("cpu_load"), "%", None, "measurement")
     elif what_config == "cpu_temp":
@@ -598,6 +618,7 @@ def config_json(what_config, device="0", hass_api=False):
         result = {key: data[key] for key in ["name", "icon", "state_class", "unit_of_measurement", "device_class", "unique_id", "value_template"] if key in data}
         return result
 
+    # print(data)
     return json.dumps(data)
 
 
@@ -713,16 +734,18 @@ def send_sensor_data_to_home_assistant(entity_id, state, attributes):
 
 
 def publish_to_mqtt(monitored_values):
+    # print(monitored_values)
     client = create_mqtt_client()
     if client is None:
         return
 
     client.loop_start()
-    non_standard_values = ['restart_button', 'shutdown_button', 'display_control', 'drive_temps', 'ext_sensors']
+    non_standard_values = ['restart_button', 'shutdown_button', 'display_control', 'drive_temps', 'ext_sensors', "gpu"]
   # Publish standard monitored values
     for key, value in monitored_values.items():
         if key not in non_standard_values and key in config.__dict__ and config.__dict__[key]:
             if config.discovery_messages:
+
                 client.publish(f"{config.mqtt_discovery_prefix}/sensor/{config.mqtt_topic_prefix}/{hostname}_{key}/config",
                             config_json(key), qos=config.qos)
             if config.use_availability:
@@ -730,6 +753,34 @@ def publish_to_mqtt(monitored_values):
             client.publish(f"{config.mqtt_uns_structure}{config.mqtt_topic_prefix}/{hostname}/{key}", value, qos=config.qos, retain=config.retain)
 
   # Publish non standard values    
+    if config.gpu:
+        if config.discovery_messages:
+
+            config_json_gpu_temp = """{"state_topic": "rpi-MQTT-monitor/llm-pi/gpu_temp_C", "unique_id": "llm-pi_gpu_temp_C", "device": {"identifiers": ["llm-pi"], "manufacturer": "github.com/hjelev", "model": "RPi MQTT Monitor 0.6.3", "name": "llm-pi", "sw_version": "Debian GNU/Linux 12 (bookworm)", "hw_version": "Raspberry Pi 5 Model B Rev 1.1\u0000 by Raspberry Pi IP:192.168.1.101", "configuration_url": "https://github.com/hjelev/rpi-mqtt-monitor", "connections": [["mac", "88-A2-9E-03-10-85"]]}, "icon": "mdi:thermometer", "name": "GPU Temperature", "unit_of_measurement": "ºC", "state_class": "measurement", "expire_after": 360}"""
+
+            config_json_gpu_fan = """{"state_topic": "rpi-MQTT-monitor/llm-pi/gpu_fan_rpm", "unique_id": "llm-pi_gpu_fan_rpm", "device": {"identifiers": ["llm-pi"], "manufacturer": "github.com/hjelev", "model": "RPi MQTT Monitor 0.6.3", "name": "llm-pi", "sw_version": "Debian GNU/Linux 12 (bookworm)", "hw_version": "Raspberry Pi 5 Model B Rev 1.1\u0000 by Raspberry Pi IP:192.168.1.101", "configuration_url": "https://github.com/hjelev/rpi-mqtt-monitor", "connections": [["mac", "88-A2-9E-03-10-85"]]}, "icon": "mdi:fan", "name": "GPU Fan RPM", "unit_of_measurement": "RPM", "state_class": "measurement", "expire_after": 360}"""
+
+            config_json_gpu_percent = """{"state_topic": "rpi-MQTT-monitor/llm-pi/gpu_percent", "unique_id": "llm-pi_gpu_percent", "device": {"identifiers": ["llm-pi"], "manufacturer": "github.com/hjelev", "model": "RPi MQTT Monitor 0.6.3", "name": "llm-pi", "sw_version": "Debian GNU/Linux 12 (bookworm)", "hw_version": "Raspberry Pi 5 Model B Rev 1.1\u0000 by Raspberry Pi IP:192.168.1.101", "configuration_url": "https://github.com/hjelev/rpi-mqtt-monitor", "connections": [["mac", "88-A2-9E-03-10-85"]]}, "icon": "mdi:brightness-percent", "name": "GPU Percent Utilization", "unit_of_measurement": "%", "state_class": "measurement", "expire_after": 360}"""
+
+
+
+            client.publish(config.mqtt_discovery_prefix + "/sensor/" + config.mqtt_topic_prefix + "/" + hostname + "_gpu_temp_C/config",
+                           config_json_gpu_temp, qos=config.qos)
+
+            client.publish(f"{config.mqtt_uns_structure}{config.mqtt_topic_prefix}/{hostname}/gpu_temp_C", monitored_values["gpu_temp"], qos=config.qos, retain=config.retain)
+
+
+            client.publish(config.mqtt_discovery_prefix + "/sensor/" + config.mqtt_topic_prefix + "/" + hostname + "_gpu_fan_rpm/config",
+                           config_json_gpu_fan, qos=config.qos)
+
+            client.publish(f"{config.mqtt_uns_structure}{config.mqtt_topic_prefix}/{hostname}/gpu_fan_rpm", monitored_values["gpu_fan"], qos=config.qos, retain=config.retain)
+
+
+            client.publish(config.mqtt_discovery_prefix + "/sensor/" + config.mqtt_topic_prefix + "/" + hostname + "_gpu_percent/config",
+                           config_json_gpu_percent, qos=config.qos)
+
+            client.publish(f"{config.mqtt_uns_structure}{config.mqtt_topic_prefix}/{hostname}/gpu_percent", monitored_values["gpu_percent"], qos=config.qos, retain=config.retain)
+
     if config.restart_button:
         if config.discovery_messages:
             client.publish(config.mqtt_discovery_prefix + "/button/" + config.mqtt_topic_prefix + "/" + hostname + "_restart/config",
@@ -746,7 +797,7 @@ def publish_to_mqtt(monitored_values):
                            config_json('display_off'), qos=config.qos)
     if config.drive_temps:
         for device, temp in monitored_values['drive_temps'].items():
-            if config.discovery_messages:
+            if config.discovery_messages:                
                 client.publish(config.mqtt_discovery_prefix + "/sensor/" + config.mqtt_topic_prefix + "/" + hostname + "_" + device + "_temp/config",
                            config_json(device + "_temp", device), qos=config.qos)
             if config.use_availability:
@@ -924,7 +975,13 @@ def collect_monitored_values():
         data_sent, data_received = get_network_data()
         monitored_values["data_sent"] = data_sent
         monitored_values["data_received"] = data_received
+    if config.gpu:
+        gpustats = get_gpu_status()
+        monitored_values["gpu_temp"] = gpustats[0]
+        monitored_values["gpu_fan"] = gpustats[1]
+        monitored_values["gpu_percent"] = gpustats[2]
 
+    # print(monitored_values)
     return monitored_values
 
 
